@@ -1,4 +1,3 @@
-
 <?php
 /**
  * Database management class.
@@ -50,6 +49,10 @@ class IMPRO_Database {
         return $this->wpdb->prefix . 'impro_rsvps';
     }
 
+    public function get_email_logs_table() {
+        return $this->wpdb->prefix . 'impro_email_logs';
+    }
+
     /**
      * Get all table names.
      *
@@ -57,10 +60,11 @@ class IMPRO_Database {
      */
     public function get_table_names() {
         return array(
-            'events' => $this->get_events_table(),
-            'guests' => $this->get_guests_table(),
+            'events'      => $this->get_events_table(),
+            'guests'      => $this->get_guests_table(),
             'invitations' => $this->get_invitations_table(),
-            'rsvps' => $this->get_rsvps_table()
+            'rsvps'       => $this->get_rsvps_table(),
+            'email_logs'  => $this->get_email_logs_table()
         );
     }
 
@@ -86,12 +90,12 @@ class IMPRO_Database {
         if ( empty( $table_name ) ) {
             return false;
         }
-        
-        $query = $this->wpdb->prepare( 
-            "SHOW TABLES LIKE %s", 
-            $table_name 
+
+        $query = $this->wpdb->prepare(
+            "SHOW TABLES LIKE %s",
+            $table_name
         );
-        
+
         return $this->wpdb->get_var( $query ) === $table_name;
     }
 
@@ -139,7 +143,7 @@ class IMPRO_Database {
             created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
             PRIMARY KEY (id),
-            KEY idx_email (email),
+            UNIQUE KEY email (email),
             KEY idx_category (category),
             KEY idx_created_at (created_at)
         ) $charset_collate;";
@@ -188,26 +192,40 @@ class IMPRO_Database {
             UNIQUE KEY guest_event (guest_id, event_id)
         ) $charset_collate;";
 
+        // Email Logs table
+        $email_logs_table = $this->get_email_logs_table();
+        $sql_email_logs = "CREATE TABLE $email_logs_table (
+            id mediumint(9) NOT NULL AUTO_INCREMENT,
+            invitation_id mediumint(9) NOT NULL,
+            email varchar(255) NOT NULL,
+            sent_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_invitation_id (invitation_id),
+            KEY idx_email (email),
+            KEY idx_sent_at (sent_at)
+        ) $charset_collate;";
+
         require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
-        
+
         // تنفيذ إنشاء الجداول
-        $result1 = dbDelta( $sql_events );
-        $result2 = dbDelta( $sql_guests );
-        $result3 = dbDelta( $sql_invitations );
-        $result4 = dbDelta( $sql_rsvps );
-        
+        dbDelta( $sql_events );
+        dbDelta( $sql_guests );
+        dbDelta( $sql_invitations );
+        dbDelta( $sql_rsvps );
+        dbDelta( $sql_email_logs );
+
         // التحقق من النجاح
         $success = true;
-        
+
         // التحقق من وجود الجداول
-        $required_tables = array( 'events', 'guests', 'invitations', 'rsvps' );
+        $required_tables = array( 'events', 'guests', 'invitations', 'rsvps', 'email_logs' );
         foreach ( $required_tables as $table_key ) {
             if ( ! $this->table_exists( $table_key ) ) {
                 error_log( 'Failed to create table: ' . $table_key );
                 $success = false;
             }
         }
-        
+
         return $success;
     }
 
@@ -221,11 +239,12 @@ class IMPRO_Database {
             $this->get_rsvps_table(),
             $this->get_invitations_table(),
             $this->get_guests_table(),
-            $this->get_events_table()
+            $this->get_events_table(),
+            $this->get_email_logs_table()
         );
 
         $success = true;
-        
+
         foreach ( $tables as $table ) {
             if ( ! empty( $table ) ) {
                 $result = $this->wpdb->query( "DROP TABLE IF EXISTS `$table`" );
@@ -235,7 +254,7 @@ class IMPRO_Database {
                 }
             }
         }
-        
+
         return $success;
     }
 
@@ -250,12 +269,12 @@ class IMPRO_Database {
         if ( empty( $args ) ) {
             return $query;
         }
-        
+
         // التحقق من صحة المعطيات
         if ( ! is_array( $args ) ) {
             $args = array( $args );
         }
-        
+
         return $this->wpdb->prepare( $query, $args );
     }
 
@@ -346,7 +365,7 @@ class IMPRO_Database {
             error_log( 'Invalid data for insert operation' );
             return false;
         }
-        
+
         try {
             $result = $this->wpdb->insert( $table, $data, $format );
             return $result ? $this->wpdb->insert_id : false;
@@ -374,7 +393,7 @@ class IMPRO_Database {
             error_log( 'Invalid data for update operation' );
             return false;
         }
-        
+
         try {
             return $this->wpdb->update( $table, $data, $where, $format, $where_format );
         } catch ( Exception $e ) {
@@ -400,7 +419,7 @@ class IMPRO_Database {
             error_log( 'Invalid data for delete operation' );
             return false;
         }
-        
+
         try {
             return $this->wpdb->delete( $table, $where, $where_format );
         } catch ( Exception $e ) {
@@ -420,22 +439,22 @@ class IMPRO_Database {
         $tables = $this->get_table_names();
         $total_size = 0;
         $table_sizes = array();
-        
+
         foreach ( $tables as $key => $table_name ) {
-            $size = $this->wpdb->get_var( 
+            $size = $this->wpdb->get_var(
                 $this->wpdb->prepare(
-                    "SELECT ROUND(((data_length + index_length) / 1024 / 1024), 2) 
-                     FROM information_schema.TABLES 
+                    "SELECT ROUND(((data_length + index_length) / 1024 / 1024), 2)
+                     FROM information_schema.TABLES
                      WHERE table_schema = %s AND table_name = %s",
                     DB_NAME,
                     $table_name
                 )
             );
-            
+
             $table_sizes[ $key ] = floatval( $size );
             $total_size += $table_sizes[ $key ];
         }
-        
+
         return array(
             'total_size_mb' => round( $total_size, 2 ),
             'tables' => $table_sizes
@@ -450,7 +469,7 @@ class IMPRO_Database {
     public function optimize_tables() {
         $tables = $this->get_table_names();
         $success = true;
-        
+
         foreach ( $tables as $table_name ) {
             $result = $this->wpdb->query( "OPTIMIZE TABLE `$table_name`" );
             if ( $result === false ) {
@@ -458,7 +477,7 @@ class IMPRO_Database {
                 $success = false;
             }
         }
-        
+
         return $success;
     }
 

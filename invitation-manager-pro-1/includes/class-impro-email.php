@@ -51,7 +51,11 @@ class IMPRO_Email {
             
             // Update invitation status
             $invitation_manager = new IMPRO_Invitation_Manager();
-            $invitation_manager->update_invitation_status( $invitation->id, 'sent' );
+            $invitation_manager->update_invitation( $invitation->id, array(
+                'status'  => 'sent',
+                'is_sent' => 1,
+                'sent_at' => current_time( 'mysql' )
+            ) );
         }
 
         return $sent;
@@ -277,33 +281,19 @@ class IMPRO_Email {
      * @param string $email Email address.
      */
     private static function log_email_sent( $invitation_id, $email ) {
-        global $wpdb;
-
         $database = new IMPRO_Database();
         $table = $database->get_table_name( 'email_logs' );
 
-        // Create email logs table if it doesn't exist
-        if ( ! $database->table_exists( 'email_logs' ) ) {
-            $wpdb->query( "
-                CREATE TABLE {$table} (
-                    id int(11) NOT NULL AUTO_INCREMENT,
-                    invitation_id int(11) NOT NULL,
-                    email varchar(255) NOT NULL,
-                    sent_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (id),
-                    KEY idx_invitation_id (invitation_id),
-                    KEY idx_email (email),
-                    KEY idx_sent_at (sent_at)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            " );
+        if ( ! $table ) {
+            return;
         }
 
-        $wpdb->insert(
+        $database->insert(
             $table,
             array(
                 'invitation_id' => $invitation_id,
-                'email' => $email,
-                'sent_at' => current_time( 'mysql' )
+                'email'         => $email,
+                'sent_at'       => current_time( 'mysql' )
             ),
             array( '%d', '%s', '%s' )
         );
